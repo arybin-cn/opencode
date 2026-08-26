@@ -148,6 +148,153 @@ const table = sqliteTable("session", {
 
 - Always run `bun typecheck` from package directories (e.g., `packages/opencode`), never `tsc` directly.
 
+## Build From a Repository URL
+
+When a user asks to install from a Git repository and provides a version
+name, version number, or version suffix, treat those inputs as the repository
+source and custom build identifier for the same operation.
+
+- Use the repository URL supplied by the user. Do not substitute another remote
+  or assume a particular hosting provider.
+- Clone the repository without specifying a branch so Git uses the repository's
+  default branch. If the repository is already checked out, fetch and update
+  that default branch before building.
+- Read the baseline version from
+  `packages/opencode/package.json` in the checked-out repository. Do not guess
+  the baseline version.
+- Treat a short identifier such as `AB` as a suffix and build
+  `${BASE_VERSION}.AB`; for example, baseline `1.18.21` becomes
+  `1.18.21.AB`.
+- If the user supplies a complete custom version beginning with the baseline,
+  such as `1.18.21.AB`, use it as-is and do not append it twice. Reject values
+  that do not match the baseline or the allowed suffix format.
+- Pass the resulting version through `OPENCODE_VERSION` and verify the built
+  executable reports that exact version before claiming installation succeeded.
+
+For a new checkout, the source step is equivalent to:
+
+```bash
+REPOSITORY_URL="https://github.com/OWNER/REPOSITORY.git"
+git clone "$REPOSITORY_URL" opencode-local
+cd opencode-local
+```
+
+The clone command intentionally omits `--branch`; the remote's default branch
+is the build source.
+
+## Local Production Build
+
+Use this guide when building a customized local OpenCode executable from the
+baseline. The command below follows the production build path and only builds
+the current host platform.
+
+### Prerequisites
+
+- Run commands from the repository root.
+- Use the Bun version declared in the root `package.json` (`bun@1.3.14`).
+- This is a local single-platform build. Before building, inspect
+  `packages/opencode/script/build.ts` and make its platform dependency installs
+  target only the current host: replace each `--os="*" --cpu="*"` with
+  `--os=${process.platform} --cpu=${process.arch}`. Apply this to the
+  `@opentui/core`, `@parcel/watcher`, and `@ff-labs/fff-bun` install commands.
+- Do not use this local-only change for a release build that produces binaries
+  for multiple platforms. Restore the wildcard install arguments before such a
+  build.
+
+### Version Suffix
+
+Ask the user for a non-empty custom version suffix before building. Do not guess
+or silently choose one. The suffix must contain only ASCII letters, digits, and
+hyphens, matching `^[A-Za-z0-9-]+$`.
+
+### Formal Build
+
+Replace `AB` with the exact suffix supplied by the user. When the user supplied
+an already normalized full custom version, set `CUSTOM_VERSION` to that value
+instead of appending it again:
+
+```bash
+VERSION_INPUT="AB"
+BUN=(npm exec --yes bun@1.3.14 --)
+
+BASE_VERSION="$("${BUN[@]}" -e 'const pkg = await Bun.file("packages/opencode/package.json").json(); console.log(pkg.version)')"
+if [[ -z "$BASE_VERSION" ]]; then
+  printf 'Could not read the baseline version\n' >&2
+  exit 1
+fi
+
+if [[ "$VERSION_INPUT" == "$BASE_VERSION."* ]]; then
+  CUSTOM_VERSION="$VERSION_INPUT"
+  CUSTOM_SUFFIX="${VERSION_INPUT#"$BASE_VERSION."}"
+else
+  CUSTOM_SUFFIX="$VERSION_INPUT"
+  CUSTOM_VERSION="${BASE_VERSION}.${CUSTOM_SUFFIX}"
+fi
+
+if [[ ! "$CUSTOM_SUFFIX" =~ ^[A-Za-z0-9-]+$ ]]; then
+  printf 'Invalid version suffix or custom version: %s\n' "$VERSION_INPUT" >&2
+  exit 1
+fi
+
+printf 'Building OpenCode %s\n' "$CUSTOM_VERSION"
+
+BUN_NO_UPDATE_NOTIFIER=1 "${BUN[@]}" install --frozen-lockfile
+OPENCODE_CHANNEL=latest OPENCODE_VERSION="$CUSTOM_VERSION" \
+  BUN_NO_UPDATE_NOTIFIER=1 "${BUN[@]}" run ./packages/opencode/script/build.ts --single
+```
+
+The command preserves the production options: minification, code splitting,
+embedded Web UI, and Bun compilation. Do not add `--skip-embed-web-ui`,
+`--sourcemaps`, `--baseline`, or a preview channel setting. `--single` builds
+only the current host platform.
+
+The executable is written to:
+
+```text
+packages/opencode/dist/opencode-<platform>/bin/opencode
+```
+
+### Build Acceleration
+
+- Keep Bun's package cache and `node_modules` between builds. Do not remove them
+  unless dependencies need to be repaired.
+- Use `bun install --frozen-lockfile` so an unchanged lockfile avoids dependency
+  resolution changes and keeps the build reproducible.
+- On the first local build after applying the local-only `build.ts` change, do
+  not pass `--skip-install`; this installs only the current platform's native
+  packages. On repeat builds, when dependencies and the lockfile have not
+  changed and those packages are still available, pass `--skip-install` to
+  `packages/opencode/script/build.ts`. This skips only dependency installation;
+  it does not change the production bundle.
+- Keep `--single` for local builds. Building all release targets is substantially
+  slower and is unnecessary for a local executable.
+
+Do not use `--skip-install` for the first build unless the platform-specific
+packages installed by the build script are already available.
+
+### Verify
+
+The build script runs a smoke test for the current host. Also verify the final
+version explicitly:
+
+```bash
+BINARY_PATHS=(packages/opencode/dist/*/bin/opencode)
+if [[ ${#BINARY_PATHS[@]} -ne 1 || ! -x "${BINARY_PATHS[0]}" ]]; then
+  printf 'Could not identify the current-platform OpenCode binary\n' >&2
+  exit 1
+fi
+
+VERSION_OUTPUT="$("${BINARY_PATHS[0]}" --version)"
+printf '%s\n' "$VERSION_OUTPUT"
+if [[ "$VERSION_OUTPUT" != *"$CUSTOM_VERSION"* ]]; then
+  printf 'Expected version %s, got: %s\n' "$CUSTOM_VERSION" "$VERSION_OUTPUT" >&2
+  exit 1
+fi
+```
+
+The version output must contain the complete custom version, such as
+`1.18.21.AB`. Do not distribute the binary if it does not.
+
 ## V2 Session Core
 
 - Keep durable prompt admission separate from model execution. `SessionV2.prompt(...)` admits one durable `session_input` row before scheduling advisory `SessionExecution.wake(sessionID)` unless `resume: false` requests admit-only behavior. The serialized runner promotes admitted inputs into visible user messages at safe boundaries.
