@@ -132,6 +132,7 @@ import { SessionGroupView } from "./group-view"
 import { useEntryAnchor } from "./anchor-view"
 import { containsAnchor, createTimelineAnchors, groupID } from "./anchors"
 import { rowsAfter, rowsBefore, rowWeight } from "./mount-budget"
+import { StickyPrompt } from "./sticky-prompt"
 export { InlineToolRow } from "./message-parts"
 export { toolDisplay } from "./message-parts"
 
@@ -1516,6 +1517,12 @@ export function Session(props: {
         >
           <Show when={session()}>
             <box flexGrow={1} minHeight={0} position="relative">
+              <StickyPrompt
+                scroll={() => scroll}
+                anchors={anchors}
+                messages={messages}
+                onSelect={jumpToMessage}
+              />
               <scrollbox
                 ref={(r) => {
                   scroll = r

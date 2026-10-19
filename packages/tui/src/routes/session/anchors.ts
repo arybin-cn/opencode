@@ -3,7 +3,7 @@ import type { PartRef, SessionEntry, SessionNode } from "./grouping/session"
 
 export type AnchorTarget = { type: "part"; ref: PartRef } | { type: "group"; groupID: string }
 
-type Anchor = {
+export type TimelineAnchor = {
   target: AnchorTarget
   node: Pick<Renderable, "y" | "height" | "isDestroyed">
 }
@@ -12,6 +12,12 @@ export function anchorKey(target: AnchorTarget) {
   return target.type === "part"
     ? JSON.stringify(["part", target.ref.messageID, target.ref.partID])
     : JSON.stringify(["group", target.groupID])
+}
+
+export function anchorMessageID(target: AnchorTarget) {
+  if (target.type === "part") return target.ref.messageID
+  const [messageID] = JSON.parse(target.groupID) as [string]
+  return messageID
 }
 
 /** Whole non-assistant messages have one canonical UI body part. Derived
@@ -51,13 +57,13 @@ export function containsAnchor(
 
 /** Only mounted parts and actual group headers register. Geometry stays in OpenTUI. */
 export function createTimelineAnchors() {
-  const entries = new Map<string, Anchor>()
+  const entries = new Map<string, TimelineAnchor>()
   const list = () =>
     [...entries.values()]
       .filter((anchor) => !anchor.node.isDestroyed && anchor.node.height > 0)
       .sort((a, b) => a.node.y - b.node.y)
   return {
-    register(anchor: Anchor) {
+    register(anchor: TimelineAnchor) {
       const key = anchorKey(anchor.target)
       entries.set(key, anchor)
       return () => {
