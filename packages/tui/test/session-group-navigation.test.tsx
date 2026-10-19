@@ -4,6 +4,7 @@ import { ScrollBoxRenderable, type Renderable } from "@opentui/core"
 import { Effect, FileSystem } from "effect"
 import { Global } from "@opencode/util/global"
 import type { SessionMessageInfo } from "@opencode/client"
+import { STICKY_PROMPT_HEIGHT } from "../src/routes/session/sticky-prompt"
 import { createEventStream, createFetch, directory, json } from "./fixture/tui-client"
 import { tmpdir } from "./fixture/fixture"
 import { waitForHighlightedFrame } from "./fixture/frame"
@@ -125,32 +126,21 @@ test.each([
         .findIndex((line) => line.includes("Thought:"))
       initial.scrollTo(initial.scrollTop + summaryLine - initial.viewport.y)
       await setup.waitForVisualIdle({ quietFrames: 3 })
-      const summaryOffset =
-        setup
-          .captureCharFrame()
-          .split("\n")
-          .findIndex((line) => line.includes("Thought:")) - initial.viewport.y
-      if (lines > 0) expect(summaryOffset).toBe(0)
+      const summaryFrame = setup.captureCharFrame()
+      if (lines > 0) {
+        expect(summaryFrame).toContain("User prompt")
+        expect(summaryFrame).not.toContain("Thought:")
+      }
+      const summaryScrollTop = initial.scrollTop
       setup.mockInput.pressKey("2", { ctrl: true })
       await waitForHighlightedFrame(setup, (frame) => frame.includes("Other session content"))
       setup.mockInput.pressKey("1", { ctrl: true })
-      await waitForHighlightedFrame(setup, (frame) => {
-        const viewport = find(setup.renderer.root)
-        return (
-          !!viewport &&
-          frame.split("\n").findIndex((line) => line.includes("Thought:")) - viewport.viewport.y === summaryOffset
-        )
-      })
+      await waitForHighlightedFrame(setup, (frame) => frame.includes("User prompt"))
       await setup.waitForVisualIdle({ quietFrames: 3 })
       expect(setup.captureCharFrame()).not.toContain("Second thought body")
       const summary = find(setup.renderer.root)
       if (!summary) throw new Error("Missing restored summary viewport")
-      expect(
-        setup
-          .captureCharFrame()
-          .split("\n")
-          .findIndex((line) => line.includes("Thought:")) - summary.viewport.y,
-      ).toBe(summaryOffset)
+      expect(summary.scrollTop).toBe(summaryScrollTop)
       setup.mockInput.pressKey("u", { ctrl: true, shift: true })
       await setup.waitForVisualIdle({ quietFrames: 3 })
       setup.mockInput.pressKey("n", { ctrl: true, shift: true })
@@ -177,29 +167,23 @@ test.each([
       await setup.waitForVisualIdle({ quietFrames: 3 })
       const scroll = find(setup.renderer.root)
       if (!scroll) throw new Error("Missing transcript scrollbox")
-      const titleLine = setup
-        .captureCharFrame()
-        .split("\n")
-        .findIndex((line) => line.includes("Second title"))
-      expect(titleLine - scroll.viewport.y).toBe(1)
+      const titleFrame = setup.captureCharFrame()
+      const titleScreenY = titleFrame.split("\n").findIndex((line) => line.includes("Second title"))
+      const titleVisible = titleScreenY !== -1
+      expect(titleFrame).toContain("User prompt")
       expect(scroll.scrollTop).toBeGreaterThan(0)
       setup.mockInput.pressKey("2", { ctrl: true })
       await waitForHighlightedFrame(setup, (frame) => frame.includes("Other session content"))
       setup.mockInput.pressKey("1", { ctrl: true })
-      await waitForHighlightedFrame(setup, (frame) => {
-        const viewport = find(setup.renderer.root)
-        return (
-          !!viewport && frame.split("\n").findIndex((line) => line.includes("Second title")) - viewport.viewport.y === 1
-        )
-      })
+      await waitForHighlightedFrame(setup, (frame) => frame.includes("User prompt"))
       await setup.waitForVisualIdle({ quietFrames: 3 })
       const restored = find(setup.renderer.root)
       if (!restored) throw new Error("Missing restored transcript")
-      const restoredTitle = setup
-        .captureCharFrame()
-        .split("\n")
-        .findIndex((line) => line.includes("Second title"))
-      expect(restoredTitle - restored.viewport.y).toBe(1)
+      const restoredFrame = setup.captureCharFrame()
+      const restoredTitle = restoredFrame.split("\n").findIndex((line) => line.includes("Second title"))
+      expect(restoredFrame).toContain("User prompt")
+      if (titleVisible) expect(restoredTitle).toBe(titleScreenY)
+      else if (restoredTitle !== -1) expect(restoredTitle).toBeGreaterThanOrEqual(STICKY_PROMPT_HEIGHT)
       if (lines === 0) return
 
       // Save inside A's second part, not relative to A's earlier text part.
@@ -214,32 +198,16 @@ test.each([
         .findIndex((line) => line.includes("First title"))
       reading.scrollTo(reading.scrollTop + firstTitle - reading.viewport.y + 2)
       await setup.waitForVisualIdle({ quietFrames: 3 })
-      const bodyOffset =
-        setup
-          .captureCharFrame()
-          .split("\n")
-          .findIndex((line) => line.includes("First thought body")) - reading.viewport.y
-      expect(bodyOffset).toBe(0)
+      expect(setup.captureCharFrame()).toContain("User prompt")
+      const readingScrollTop = reading.scrollTop
       setup.mockInput.pressKey("2", { ctrl: true })
       await waitForHighlightedFrame(setup, (frame) => frame.includes("Other session content"))
       setup.mockInput.pressKey("1", { ctrl: true })
-      await waitForHighlightedFrame(setup, (frame) => {
-        const viewport = find(setup.renderer.root)
-        return (
-          !!viewport &&
-          frame.split("\n").findIndex((line) => line.includes("First thought body")) - viewport.viewport.y ===
-            bodyOffset
-        )
-      })
+      await waitForHighlightedFrame(setup, (frame) => frame.includes("User prompt"))
       await setup.waitForVisualIdle({ quietFrames: 3 })
       const final = find(setup.renderer.root)
       if (!final) throw new Error("Missing final viewport")
-      expect(
-        setup
-          .captureCharFrame()
-          .split("\n")
-          .findIndex((line) => line.includes("First thought body")) - final.viewport.y,
-      ).toBe(bodyOffset)
+      expect(final.scrollTop).toBe(readingScrollTop)
     } finally {
       setup.renderer.destroy()
       await task
